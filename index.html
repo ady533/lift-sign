@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Lift sign">
+<meta name="theme-color" content="#f6f4f0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161514" media="(prefers-color-scheme: dark)">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https:; img-src data:; base-uri 'none'; form-action 'none'">
+<title>Lift sign</title>
+<!--
+  The manager's switch for the elevator sign. Static page, no secrets in it: everything it needs
+  comes in the setup link's #fragment (never sent to any server), made by tools/manager-link.py:
+    #s=<ntfy server>&t=<topic>&st=<status topic>&k=<elevator.key>&on=<quiet screen>&off=<busy screen>
+  It signs each command on the phone, exactly like tools/switch.sh, and posts it to ntfy. That
+  key can only pick between screens already on the Kindle; it can't put anything new on it.
+-->
+<style>
+  :root { --bg: #f6f4f0; --card: #fff; --ink: #1d1b19; --muted: #6f6a64; --line: #e4e0da;
+          --go: #1f6b4a; --go-ink: #fff; --stop: #8a3b2b; --stop-ink: #fff; --chip: #ece8e1; --sel: #1d1b19; --sel-ink: #fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161514; --card: #201f1d; --ink: #f1eee9; --muted: #a29c94; --line: #34312d;
+            --go: #2f8c63; --stop: #b0523e; --chip: #2c2a27; --sel: #f1eee9; --sel-ink: #161514; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         padding: max(20px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+  main { max-width: 440px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+  h1 { font-size: 15px; font-weight: 600; letter-spacing: .02em; color: var(--muted); margin: 0; text-transform: uppercase; }
+  .now { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
+  .now .big { font-size: 26px; font-weight: 650; line-height: 1.2; }
+  .now .sub { color: var(--muted); margin-top: 4px; }
+  .now .meta { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: 2px; background: var(--muted); }
+  .dot.on { background: var(--go); } .dot.off { background: var(--stop); }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chips span { color: var(--muted); font-size: 14px; width: 100%; }
+  .chip { flex: 1 1 0; min-width: 0; border: 0; border-radius: 999px; padding: 10px 6px; font: inherit; font-size: 15px;
+          background: var(--chip); color: var(--ink); cursor: pointer; white-space: nowrap; }
+  .chip[aria-pressed="true"] { background: var(--sel); color: var(--sel-ink); }
+  .act { display: block; width: 100%; border: 0; border-radius: 16px; padding: 20px 18px; font: inherit; text-align: left; cursor: pointer; }
+  .act b { display: block; font-size: 21px; }
+  .act small { display: block; opacity: .85; font-size: 14px; margin-top: 2px; }
+  .act.go { background: var(--go); color: var(--go-ink); }
+  .act.stop { background: var(--stop); color: var(--stop-ink); }
+  .act:disabled { opacity: .55; }
+  .link { background: none; border: 0; color: var(--muted); font: inherit; font-size: 15px; text-decoration: underline; padding: 6px 0; cursor: pointer; align-self: center; }
+  .msg { min-height: 1.4em; text-align: center; font-size: 15px; }
+  .msg.err { color: var(--stop); }
+  .setup { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
+  :focus-visible { outline: 3px solid #6b8fd6; outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main id="app" hidden>
+  <h1 id="title">Lift sign</h1>
+  <section class="now" aria-live="polite">
+    <div class="big"><span class="dot" id="dot"></span><span id="head">Checking…</span></div>
+    <div class="sub" id="sub"></div>
+    <div class="meta" id="meta"></div>
+  </section>
+  <div class="chips" role="group" aria-label="For how long">
+    <span>For how long</span>
+    <button class="chip" data-m="30">30 min</button>
+    <button class="chip" data-m="60" aria-pressed="true">1 hour</button>
+    <button class="chip" data-m="120">2 hours</button>
+    <button class="chip" data-m="">Till close</button>
+  </div>
+  <button class="act go" id="quiet"><b>Quiet: send guests over</b><small id="quietSub">Shows “Tables are available. Just walk in.”</small></button>
+  <button class="act stop" id="busy"><b>Busy: pause the sign</b><small id="busySub">Shows the hotel logo instead</small></button>
+  <div class="msg" id="msg" role="status"></div>
+  <button class="link" id="normal">Back to the usual setting now</button>
+</main>
+<main id="nosetup" hidden>
+  <div class="setup"><b>This page needs its setup link.</b><br>Ask whoever set up the sign to send it to you, open it once, then add it to your home screen.</div>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const SCREENS = {
+  hotel: ["Paused", "Showing the hotel logo, not sending guests over", "off"],
+  walkin: ["Sending guests over", "“Tables are available. Just walk in.”", "on"],
+  menu: ["Showing the menu", "A dish from the menu, changing every few minutes", "on"],
+  cafe: ["Showing the menu QR code", "Guests can scan it for the menu", "on"],
+};
+function load() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  let c = { s: p.get("s"), t: p.get("t"), st: p.get("st"), k: p.get("k"), on: p.get("on") || "walkin",
+            off: p.get("off") || "hotel", n: p.get("n") || "" };
+  try {
+    if (c.t && c.k) localStorage.setItem("liftsign", JSON.stringify(c));
+    else c = JSON.parse(localStorage.getItem("liftsign") || "null") || c;
+  } catch (e) { /* private mode: the link itself still works */ }
+  const ok = c.s && /^[a-z0-9.:-]+$/i.test(c.s) && /^[\w-]{1,64}$/.test(c.t || "") && /^[0-9a-f]{64}$/.test(c.k || "")
+    && /^(walkin|menu|cafe)$/.test(c.on) && /^(hotel|menu|cafe|walkin)$/.test(c.off) && (!c.st || /^[\w-]{1,64}$/.test(c.st));
+  return ok ? c : null;
+}
+const cfg = load();
+let minutes = "60", lastNote = 0, waitingSince = 0;
+
+function screenOf(name) { return SCREENS[name.replace(/-.*$/, "")] || null; }
+function hm(t) { return new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+function ago(t) {
+  const s = Math.max(0, Date.now() / 1000 - t);
+  return s < 90 ? "just now" : s < 5400 ? Math.round(s / 60) + " min ago" : "at " + hm(t);
+}
+
+async function sha256hex(text) {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(d), b => b.toString(16).padStart(2, "0")).join("");
+}
+async function send(state) {
+  const t = Math.floor(Date.now() / 1000);
+  const mac = await sha256hex(cfg.k + `${state} ${t} ${cfg.t}` + cfg.k);
+  const r = await fetch(`https://${cfg.s}/${cfg.t}`, { method: "POST", body: `v1 ${state} ${t} ${mac}`, cache: "no-store", referrerPolicy: "no-referrer" });
+  if (!r.ok) throw new Error("ntfy said " + r.status);
+  return t;
+}
+
+async function status() {
+  if (!cfg.st) { $("head").textContent = "Sent commands can't be confirmed (no status topic)"; return; }
+  let notes = [];
+  try {
+    const r = await fetch(`https://${cfg.s}/${cfg.st}/json?poll=1&since=12h`, { cache: "no-store", referrerPolicy: "no-referrer" });
+    const text = await r.text();
+    for (const line of text.split("\n")) {
+      try { const m = JSON.parse(line); if (m.event === "message" && typeof m.message === "string") notes.push(m); } catch (e) {}
+    }
+  } catch (e) { $("meta").textContent = "Can't reach ntfy right now; retrying."; return; }
+  const show = [...notes].reverse().find(m => /showing [a-z0-9-]+/.test(m.message));
+  const last = notes[notes.length - 1];
+  if (show) {
+    const m = show.message.match(/showing ([a-z0-9-]+)(?: for (\d+) min)?/);
+    const sc = screenOf(m[1]);
+    $("head").textContent = sc ? sc[0] : "Showing " + m[1];
+    $("dot").className = "dot " + (sc ? sc[2] : "");
+    let sub = sc ? sc[1] : "";
+    if (m[2]) sub += ` · until ${hm(show.time + m[2] * 60)}, then back to usual`;
+    $("sub").textContent = sub;
+    lastNote = Math.max(lastNote, show.time);
+  } else {
+    $("head").textContent = "No news from the sign in 12 hours";
+    $("dot").className = "dot"; $("sub").textContent = "It may be off or out of Wi-Fi.";
+  }
+  const withBatt = [...notes].reverse().find(m => /[Bb]attery (\d+)%/.test(m.message));
+  const batt = withBatt && withBatt.message.match(/[Bb]attery (\d+)%/);
+  $("meta").textContent = last ? `Last heard from the sign ${ago(last.time)}` + (batt ? ` · battery ${batt[1]}%` : "") : "";
+  if (waitingSince && show && show.time >= waitingSince) {
+    waitingSince = 0; $("msg").className = "msg"; $("msg").textContent = "✓ The sign confirmed it.";
+  }
+}
+
+async function command(state, label) {
+  const btns = [$("quiet"), $("busy"), $("normal")];
+  btns.forEach(b => b.disabled = true);
+  $("msg").className = "msg"; $("msg").textContent = "Sending…";
+  try {
+    waitingSince = await send(state);
+    $("msg").textContent = `Sent: ${label}. Waiting for the sign (up to a minute)…`;
+    for (let i = 0; i < 30 && waitingSince; i++) { await new Promise(r => setTimeout(r, 3000)); await status(); }
+    if (waitingSince) { $("msg").textContent = "Sent, but the sign hasn't confirmed yet. It will switch as soon as it's online."; waitingSince = 0; }
+  } catch (e) {
+    $("msg").className = "msg err"; $("msg").textContent = "Couldn't send: " + e.message + ". Check your internet and try again.";
+  } finally { btns.forEach(b => b.disabled = false); }
+}
+
+if (!cfg) { $("nosetup").hidden = false; }
+else {
+  $("app").hidden = false;
+  if (cfg.n) { $("title").textContent = cfg.n; document.title = cfg.n; }
+  const on = SCREENS[cfg.on], off = SCREENS[cfg.off];
+  $("quietSub").textContent = cfg.on === "walkin" ? "Shows “Tables are available. Just walk in.”" : on[1];
+  $("busySub").textContent = cfg.off === "hotel" ? "Shows the hotel logo instead" : off[1];
+  for (const c of document.querySelectorAll(".chip")) {
+    c.onclick = () => { minutes = c.dataset.m; document.querySelectorAll(".chip").forEach(x => x.setAttribute("aria-pressed", x === c)); };
+  }
+  const dur = () => minutes ? (minutes === "60" ? " for 1 hour" : minutes === "120" ? " for 2 hours" : ` for ${minutes} min`) : " till close";
+  $("quiet").onclick = () => command(cfg.on + minutes, "send guests over" + dur());
+  $("busy").onclick = () => command(cfg.off + minutes, "pause" + dur());
+  $("normal").onclick = () => command("normal", "back to usual");
+  status(); setInterval(() => { if (!waitingSince) status(); }, 30000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) status(); });
+}
+</script>
+</body>
+</html>
